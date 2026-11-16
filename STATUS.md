@@ -3,7 +3,7 @@
 Last verified: 2026-11-16, against the head of
 `arena/48cf1f1b-backlog-killer` / CI run
 [43893659614](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43893659614) (commit
-`1b4b26b`, the ECC port) — — **all jobs green**.
+`1b4b26b`, the ECC port `a0e6f7d`) — **all jobs green**.
 
 | Job | Result |
 | --- | --- |
