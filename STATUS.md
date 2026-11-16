@@ -2,13 +2,14 @@
 
 Last verified: 2026-11-16, against the head of
 `arena/48cf1f1b-backlog-killer` / CI run
-[43886442294](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43886442294) — **all jobs green**.
+[43892484666](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43892484666) (commit
+`a0e6f7d`, the ECC port) — **all jobs green**.
 
 | Job | Result |
 | --- | --- |
 | Core tests (typecheck, 196 tests, CLI smoke, bundle boot check) | success |
 | Android unit tests (Robolectric sandbox/keystore/kv) | success |
-| Build debug APK | success — `forgex-debug-apk`, 4,174,616 bytes |
+| Build debug APK | success — `forgex-debug-apk`, 4,406,330 bytes |
 
 Legend: **WORKING** = implemented and verified by an automated test or a real CI
 run. **PARTIAL** = implemented but not verified end-to-end, or limited for a
@@ -23,7 +24,7 @@ stated reason. **NOT DONE** = not implemented.
 | TypeScript typecheck (`tsc --noEmit`, strict) | **pass** |
 | Core unit/integration tests | **196 pass**, 17 files |
 | Kotlin unit tests (Robolectric) | **pass** in CI |
-| Debug APK built in CI | **pass** — 4.17 MB artifact `forgex-debug-apk` |
+| Debug APK built in CI | **pass** — 4.41 MB artifact `forgex-debug-apk` (+231 KB for the vendored skills) |
 | APK contains the web bundle | **pass** — CI asserts `assets/app/index.html` and `assets/app/ui.js` |
 | Built UI bundle boots and renders | **pass** — `scripts/verify-bundle.mjs` runs the real esbuild output in a DOM sandbox and checks the home screen, tab bar and preview badge |
 | UI bundle size (7 vendored skills included) | 297,018 B → 83,807 B gzipped |
