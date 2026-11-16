@@ -302,3 +302,91 @@ describe('skills', () => {
     expect(await library.relevant('anything')).toHaveLength(0);
   });
 });
+
+describe('scaffold seeding', () => {
+  function pipelineWithSeed() {
+    const platform = createMemoryPlatform();
+    const kv = new MemoryKv();
+    const events = new EventStore(kv, 'seed-run');
+    const router = new RoleLlmRouter({
+      planner: [{ content: '```json\n' + PLAN_JSON + '\n```' }],
+      editor: [{ content: 'edited' }],
+      reviewer: [{ content: '{"verdict":"pass"}' }],
+      'security-reviewer': [{ content: 'ok' }],
+    });
+    const orchestrator = new Orchestrator({
+      platform,
+      llm: () => router.client(),
+      registry: ToolRegistry.standard(platform, ROOT),
+      approvals: new ApprovalManager('FULL_AUTO'),
+      events,
+      workspaceRoot: ROOT,
+    });
+    const shipped: { path: string; content: string }[][] = [];
+    const pipeline = new Pipeline({
+      platform,
+      orchestrator,
+      events,
+      memory: new ProjectMemoryStore(platform, ROOT, 'p'),
+      skills: new SkillLibrary(platform, `${ROOT}/.forgex/skills`),
+      workspaceRoot: ROOT,
+      collectFiles: async () => {
+        const entries = await platform.fs.list(ROOT, { recursive: true, includeDirs: false });
+        return Promise.all(
+          entries.map(async (entry) => ({ path: entry.name, content: await platform.fs.read(entry.path) })),
+        );
+      },
+      ship: async (files) => {
+        shipped.push(files);
+        return { repoFullName: 'me/app', branch: 'main', commitSha: 's', commitMessage: 'm', ciStatus: 'success' };
+      },
+      saveState: async () => undefined,
+      seedScaffold: true,
+    });
+    const state: RunState = {
+      runId: 'seed-run',
+      projectId: 'p',
+      request: 'build me a habit tracker app',
+      status: 'idle',
+      completedSteps: [],
+      repairAttempts: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    return { pipeline, state, platform, shipped, events };
+  }
+
+  it('seeds a known-good Android skeleton into an empty workspace', async () => {
+    const { pipeline, state, shipped, events } = pipelineWithSeed();
+    await pipeline.run(state);
+    const paths = shipped[0].map((file) => file.path);
+    expect(paths).toContain('settings.gradle.kts');
+    expect(paths).toContain('app/build.gradle.kts');
+    expect(paths.some((path) => path.endsWith('MainActivity.kt'))).toBe(true);
+    expect(paths).toContain('.github/workflows/build-apk.yml');
+    expect((await events.query({ kind: 'note' })).some((event) => (event as { detail: string }).detail.includes('seeded'))).toBe(true);
+  });
+
+  it('does not overwrite a workspace that already has a Gradle project', async () => {
+    const { pipeline, state, platform, shipped } = pipelineWithSeed();
+    await platform.fs.write(`${ROOT}/settings.gradle.kts`, 'rootProject.name = "mine"');
+    await pipeline.run(state);
+    const settings = shipped[0].find((file) => file.path === 'settings.gradle.kts');
+    expect(settings?.content).toBe('rootProject.name = "mine"');
+  });
+});
+
+describe('package and app name derivation', () => {
+  it('derives a valid package name from a request', async () => {
+    const { derivePackageName } = await import('../src/run/pipeline');
+    expect(derivePackageName('build me a habit tracker app')).toBe('dev.forgex.habit_tracker');
+    expect(derivePackageName('!!!')).toBe('dev.forgex.app');
+    expect(derivePackageName('a timer')).toMatch(/^dev\.forgex\./);
+  });
+
+  it('derives a short human app name', async () => {
+    const { deriveAppName } = await import('../src/run/pipeline');
+    expect(deriveAppName('build me a habit tracker app')).toBe('Habit Tracker');
+    expect(deriveAppName('')).toBe('ForgeX App');
+  });
+});

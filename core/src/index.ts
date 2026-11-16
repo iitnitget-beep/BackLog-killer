@@ -48,3 +48,6 @@ export type { PlanDraft, PlanStep } from './run/plan';
 export type { RunState, RunStatus, ShipResult } from './run/types';
 
 export { ProjectSession, presetEntry, agentModelHint } from './app/session';
+
+export { androidScaffold, validatePackageName, validateScaffold } from './scaffold/android';
+export type { ScaffoldFile, ScaffoldOptions } from './scaffold/android';

@@ -6,6 +6,7 @@ import { deriveNotes } from '../memory/project';
 import type { SkillLibrary } from '../skills/loader';
 import { androidBuildWorkflow } from '../ci/workflow';
 import { renderPlanMarkdown, type PlanDraft } from './plan';
+import { androidScaffold, validatePackageName } from '../scaffold/android';
 import type { RunState, RunStatus, ShipResult } from './types';
 
 export interface WorkspaceFile {
@@ -28,6 +29,11 @@ export interface PipelineDeps {
   ship: (files: WorkspaceFile[], commitMessage: string) => Promise<ShipResult>;
   /** Called after CI fails so the agent can repair from logs. */
   repairFromLogs?: (logs: string, attempt: number) => Promise<void>;
+  /**
+   * Seed an empty workspace with the known-good Android skeleton before the
+   * editors run. Disabled by default so this never surprises an existing project.
+   */
+  seedScaffold?: boolean;
   saveState: (state: RunState) => Promise<void>;
 }
 
@@ -89,6 +95,14 @@ export class Pipeline {
     const memoryContext = await this.deps.memory.context();
     if (skillContext) await events.append({ kind: 'note', detail: `loaded skills: ${skillContext.length} chars` });
     await finishStep('context', true);
+
+    // ---- Step 2b: seed a known-good skeleton on an empty workspace ---------
+    if (this.deps.seedScaffold) {
+      const seeded = await this.seedScaffoldIfEmpty(state.request);
+      if (seeded.length) {
+        await events.append({ kind: 'note', detail: `seeded known-good Android skeleton: ${seeded.join(', ')}` });
+      }
+    }
 
     // ---- Step 3: build (editor per plan step) -------------------------------
     await update({ status: 'building' });
@@ -240,6 +254,29 @@ export class Pipeline {
     return { state, plan, ship };
   }
 
+  /**
+   * Writes the scaffold only when the workspace has no Gradle project yet, so a
+   * resumed or user-edited project is never overwritten.
+   */
+  private async seedScaffoldIfEmpty(request: string): Promise<string[]> {
+    const fs = this.deps.platform.fs;
+    const root = this.deps.workspaceRoot;
+    const existing = await fs.list(root, { recursive: true, includeDirs: false, maxEntries: 200 });
+    if (existing.some((entry) => /settings\.gradle(\.kts)?$/.test(entry.name))) return [];
+    const packageName = derivePackageName(request);
+    const files = androidScaffold({
+      projectName: packageName.split('.').pop() ?? 'app',
+      packageName,
+      appName: deriveAppName(request),
+    });
+    const written: string[] = [];
+    for (const file of files) {
+      await fs.write(`${root}/${file.path}`, file.content);
+      written.push(file.path);
+    }
+    return written;
+  }
+
   private async ensureWorkflow(): Promise<void> {
     const path = `${this.deps.workspaceRoot}/.github/workflows/build-apk.yml`;
     if (!(await this.deps.platform.fs.exists(path))) {
@@ -252,6 +289,40 @@ export class Pipeline {
     onStatus('cancelled');
     return { state, plan };
   }
+}
+
+/**
+ * Words that appear in requests but say nothing about what the app is. Skipping
+ * them means "build me a habit tracker app" becomes dev.forgex.habit_tracker
+ * rather than dev.forgex.build_habit.
+ */
+const FILLER_WORDS = new Set([
+  'build', 'make', 'create', 'want', 'need', 'please', 'app', 'application', 'android',
+  'the', 'and', 'for', 'with', 'that', 'this', 'some', 'simple', 'basic', 'small', 'little',
+  'like', 'can', 'you', 'should', 'able', 'have', 'has', 'using', 'use', 'one', 'two',
+]);
+
+function contentWords(request: string): string[] {
+  return request
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2 && !FILLER_WORDS.has(word));
+}
+
+/** Turns a free-text request into a safe package name, e.g. dev.forgex.timer. */
+export function derivePackageName(request: string): string {
+  const slug = contentWords(request).slice(0, 2).join('_');
+  const candidate = `dev.forgex.${slug || 'app'}`;
+  return validatePackageName(candidate) === null ? candidate : 'dev.forgex.app';
+}
+
+/** Turns a free-text request into a short app label, e.g. "Habit Tracker". */
+export function deriveAppName(request: string): string {
+  const words = contentWords(request).slice(0, 3);
+  if (words.length === 0) return 'ForgeX App';
+  const name = words.map((word) => word[0].toUpperCase() + word.slice(1)).join(' ');
+  return name.slice(0, 40);
 }
 
 export function commitMessage(request: string, plan: PlanDraft): string {

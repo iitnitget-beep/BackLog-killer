@@ -113,3 +113,31 @@ describe('log trimming', () => {
     expect(trimmed).toContain('BUILD FAILED');
   });
 });
+
+describe('generated workflow validity', () => {
+  it('produces YAML that parses and has the shape GitHub needs', async () => {
+    // Parse with a real YAML parser so a malformed generated workflow would be
+    // caught here rather than in a user's repository.
+    const YAML = await import('yaml');
+    const doc = YAML.parse(androidBuildWorkflow({ extraSteps: ['npm ci --prefix web'] })) as Record<string, unknown>;
+    expect(Object.keys(doc)).toEqual(expect.arrayContaining(['name', 'on', 'jobs']));
+    const jobs = doc['jobs'] as Record<string, { 'runs-on': string; steps: Record<string, unknown>[] }>;
+    expect(Object.keys(jobs)).toEqual(['build']);
+    const steps = jobs.build.steps;
+    expect(steps.length).toBeGreaterThan(4);
+    // Every step must be either a uses: or a run:, never neither.
+    for (const step of steps) {
+      expect(Boolean(step['uses'] ?? step['run'])).toBe(true);
+    }
+    const checkout = steps.find((step) => String(step['uses']).startsWith('actions/checkout'));
+    expect(checkout).toBeTruthy();
+    const upload = steps.find((step) => String(step['uses']).startsWith('actions/upload-artifact'));
+    expect((upload?.['with'] as Record<string, string>)['if-no-files-found']).toBe('error');
+  });
+
+  it('produces the same valid shape for the project default', async () => {
+    const YAML = await import('yaml');
+    const doc = YAML.parse(androidBuildWorkflow());
+    expect(doc.jobs.build.steps.some((step: Record<string, string>) => String(step.run ?? '').includes('assembleDebug'))).toBe(true);
+  });
+});
