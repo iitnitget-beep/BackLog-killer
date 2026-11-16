@@ -1,7 +1,14 @@
 # Status
 
-Last verified: 2026-11-16, against commit `66fe7c3` / CI run
-[43882792186](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43882792186) — **all jobs green**.
+Last verified: 2026-11-16, against the head of
+`arena/48cf1f1b-backlog-killer` / CI run
+[43886442294](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43886442294) — **all jobs green**.
+
+| Job | Result |
+| --- | --- |
+| Core tests (typecheck, 155 tests, CLI smoke, bundle boot check) | success |
+| Android unit tests (Robolectric sandbox/keystore/kv) | success |
+| Build debug APK | success — `forgex-debug-apk`, 4,174,616 bytes |
 
 Legend: **WORKING** = implemented and verified by an automated test or a real CI
 run. **PARTIAL** = implemented but not verified end-to-end, or limited for a
@@ -14,10 +21,11 @@ stated reason. **NOT DONE** = not implemented.
 | Check | Result |
 | --- | --- |
 | TypeScript typecheck (`tsc --noEmit`, strict) | **pass** |
-| Core unit/integration tests | **97 pass**, 10 files |
+| Core unit/integration tests | **155 pass**, 15 files |
 | Kotlin unit tests (Robolectric) | **pass** in CI |
-| Debug APK built in CI | **pass** — 4.15 MB artifact `forgex-debug-apk` |
+| Debug APK built in CI | **pass** — 4.17 MB artifact `forgex-debug-apk` |
 | APK contains the web bundle | **pass** — CI asserts `assets/app/index.html` and `assets/app/ui.js` |
+| Built UI bundle boots and renders | **pass** — `scripts/verify-bundle.mjs` runs the real esbuild output in a DOM sandbox and checks the home screen, tab bar and preview badge |
 | APK installs and launches on a physical device | **NOT DONE** — no device or emulator in this environment; the launch test (`AppLaunchTest`) is an instrumented test that has not been executed, and CI cannot run it. This is the one acceptance criterion from M1/M6 that remains unverified. |
 
 Honest note on that gap: `assembleDebug` succeeding proves the app compiles, the
@@ -45,7 +53,7 @@ instrumented test, treat "it launches on a phone" as unproven.
 
 | Feature | Status | Evidence |
 | --- | --- | --- |
-| Tools: read/write/edit/grep/glob/list_dir/run_command | WORKING | `test/tools.test.ts` (18 tests) |
+| Tools: read/write/edit/grep/glob/list_dir/run_command | WORKING | `test/tools.test.ts` (19 tests) |
 | Agent creates, edits and reads a file from a prompt | WORKING | `test/agent.test.ts` "creates, edits and reads a file from a prompt" |
 | Approval modes ASK / AUTO_EDIT / FULL_AUTO | WORKING | `test/tools.test.ts`, incl. fail-closed behaviour |
 | Loop detection (5 identical calls / 10 identical contents) | WORKING | `test/agent.test.ts` |
@@ -59,7 +67,7 @@ instrumented test, treat "it launches on a phone" as unproven.
 | Feature | Status | Evidence |
 | --- | --- | --- |
 | GitHub client (user, repo, git data API, runs, logs, artifacts) | WORKING | `test/github.test.ts` against a mocked HTTP port |
-| Device-flow login | **PARTIAL** | implemented (`github/oauth.ts`); poll logic is not unit-tested and no OAuth app exists, so it has never completed a real authorisation |
+| Device-flow login | **PARTIAL** | implemented (`github/oauth.ts`); all poll outcomes (pending, slow_down, expired, denied, authorized) are unit-tested, but no OAuth app exists here, so it has never completed a real authorisation |
 | Create repo | WORKING | client + test; not wired into the UI (UI targets an existing repo) |
 | Commit + push via Git Data API | WORKING | `publishFiles` with test |
 | Trigger/monitor CI, stream logs, find APK artifact | WORKING | `test/ci.test.ts` |
@@ -91,6 +99,7 @@ same `assembleDebug` + artifact-upload structure runs green on this repository
 | Skills manager UI (create) | PARTIAL | creates a file from a template; no in-app editor for existing skills |
 | Secret scan before write | WORKING | executor gate test (blocked write leaves no file) |
 | Secret scan before push | WORKING | `prePushScan` test |
+| Known-good Android scaffold for new projects | WORKING | `test/scaffold.test.ts` (8 tests) + pipeline seeding tests; never overwrites an existing project |
 | Resume after app kill | WORKING | pipeline "resumes: a saved plan is not re-planned" |
 | Agent Timeline with per-step status | WORKING | `toTimeline` + UI render tests |
 | Rollback per step | PARTIAL | marks the step unfinished so the next run redoes it; does **not** revert files (git history is the recovery path) |
@@ -100,7 +109,7 @@ same `assembleDebug` + artifact-upload structure runs green on this repository
 
 | Feature | Status | Evidence |
 | --- | --- | --- |
-| Provider fallback on rate limit / error | WORKING | router logic; auth errors deliberately not retried. Not exercised against a real 429 |
+| Provider fallback on rate limit / error | WORKING | `test/llm.test.ts`: retry-then-fallback, auth errors not retried, per-provider model lists. Not exercised against a real 429 |
 | Error states (provider error, CI failure, missing key) | WORKING | engine returns `error`; UI shows status + toast |
 | Empty states | WORKING | per screen |
 | Performance on a low-end phone | NOT DONE | no device; bundle is 137 KB JS, which is the only proxy we have |
