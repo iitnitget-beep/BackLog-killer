@@ -28,6 +28,10 @@ jobs:
         run: npm --workspace core run test
       - name: CLI smoke (usage, secret scan)
         run: |
+          # GitHub runs `run:` with `bash -e`, and a failing command substitution
+          # (which is exactly what we assert on here) would abort the script
+          # before the assertions run. Turn that off explicitly.
+          set +e
           set -uo pipefail
           npm --workspace core run build
           usage_out=$(core/scripts/run-cli.sh 2>&1 || true)
