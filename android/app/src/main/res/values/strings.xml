@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ForgeX</string>
+    <string name="secure_storage_unavailable">ForgeX could not open the encrypted Keystore on this device, so it cannot store your API keys safely. The app will not start rather than save them in plaintext.</string>
+    <string name="notification_channel_name">Build progress</string>
+</resources>

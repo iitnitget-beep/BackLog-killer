@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Secrets and workspace never leave the device through backup. -->
+    <cloud-backup>
+        <exclude domain="sharedpref" path="forgex_secure.xml" />
+        <exclude domain="database" path="forgex.db" />
+        <exclude domain="file" path="workspace" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="forgex_secure.xml" />
+    </device-transfer>
+</data-extraction-rules>

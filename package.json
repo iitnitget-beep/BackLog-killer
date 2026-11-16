@@ -1,0 +1,12 @@
+{
+  "name": "forgex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ForgeX - describe an app on your phone, get an installable APK",
+  "license": "Apache-2.0",
+  "workspaces": ["core"],
+  "scripts": {
+    "test": "npm --workspace core run test",
+    "build:core": "npm --workspace core run build"
+  }
+}
