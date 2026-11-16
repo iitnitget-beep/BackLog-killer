@@ -22,12 +22,30 @@ import {
  * Android implementation (explicit set/get/delete, no env leakage).
  */
 export class NodeFs implements FileSystemPort {
-  constructor(private readonly root: string) {}
+  /** Absolute, normalised workspace root; all sandbox checks are relative to it. */
+  private readonly root: string;
 
+  constructor(root: string) {
+    this.root = path.resolve(root);
+  }
+
+  /**
+   * Resolves a path to an absolute location inside the sandbox.
+   *
+   * Callers pass a mix of three forms, all of which must work:
+   *   1. absolute paths inside the root  (what list() returns)
+   *   2. the root itself, however it was originally spelled ("." or "./out/ws")
+   *   3. workspace-relative paths        ("app/Main.kt")
+   * Getting this wrong is a sandbox bug, not a cosmetic one, so the order is
+   * explicit: exact/spelled-root match, then absolute, then relative.
+   */
   private resolve(p: string): string {
-    const full = p.startsWith(this.root) ? p : path.join(this.root, p);
-    const normalRoot = path.resolve(this.root);
-    const normalFull = path.resolve(full);
+    const normalRoot = this.root;
+    const spelled = path.resolve(p);
+    if (spelled === normalRoot || path.resolve(path.join(normalRoot, p)) === normalRoot) {
+      return normalRoot;
+    }
+    const normalFull = path.isAbsolute(p) ? path.resolve(p) : path.resolve(path.join(normalRoot, p));
     if (normalFull !== normalRoot && !normalFull.startsWith(`${normalRoot}${path.sep}`)) {
       throw new BridgeError(`path escapes root: ${p}`, 'EPATH');
     }
@@ -59,9 +77,10 @@ export class NodeFs implements FileSystemPort {
       }
       for (const entry of entries) {
         if (entry.name === 'node_modules' || entry.name === '.git') continue;
-        const full = path.join(dir, entry.name);
+        const full = path.resolve(dir, entry.name);
         if (entry.isDirectory()) {
-          if (options.includeDirs !== false) {
+          // A suffix filter is a file filter: directories never match ".kt".
+          if (options.includeDirs !== false && !options.suffix) {
             out.push({ name: path.relative(target, full), path: full, type: 'dir', size: 0 });
           }
           if (options.recursive) await walk(full);

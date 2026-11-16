@@ -24,8 +24,17 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm --workspace core run typecheck
-      - name: Unit tests
+      - name: Unit tests (includes the CLI harness)
         run: npm --workspace core run test
+      - name: CLI smoke (no key, usage, secret scan)
+        run: |
+          set -euo pipefail
+          npm --workspace core run build
+          core/scripts/run-cli.sh 2>&1 | grep -q "usage:" || { echo "CLI usage output missing"; exit 1; }
+          mkdir -p /tmp/scanws/workspace
+          printf 'const k = "sk-proj-abcdefghijklmnopqrstuvwxyz123456";\n' > /tmp/scanws/workspace/leak.ts
+          if core/scripts/run-cli.sh scan check --out /tmp/scanws; then echo "scan should have failed"; exit 1; fi
+          echo "CLI secret scan correctly failed on a planted key" 
       - name: Build web bundle
         run: npm --workspace core run build
       - uses: actions/upload-artifact@v4
