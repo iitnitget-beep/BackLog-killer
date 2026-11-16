@@ -140,3 +140,73 @@ documented in `docs/SETUP.md` as a manual, user-supplied step.
 `EventStore` keeps the last 2000 events per run (pruned with 25% slack to avoid
 rewriting on every append). Enough for the timeline and post-mortems on a phone;
 bounded so SQLite does not grow without limit.
+
+### D18. ECC's hook *engine* is ported, not simulated in a prompt
+
+The first ECC pass only rewrote prompt text (see NOTICE §1). That is not what
+ECC is: its value is the runtime contract — a hook returns **exit 0 to allow** or
+**exit 2 to block**, stderr alone only warns, hooks run in declaration order and
+the first block stops the chain. ForgeX now implements that contract in
+`core/src/ecc/` (`types.ts`, `runner.ts`, `registry.ts`, `hooks/*`), and every
+tool call goes through it.
+
+Consequences worth naming:
+
+- **One choke point.** `core/src/agent/executor.ts` is the only way a tool runs:
+  PreToolUse hooks → permission class → approval manager → execute → PostToolUse
+  hooks. Every branch returns an envelope, so the model always gets an answer.
+- **A crashing hook warns and continues; it never silently allows.** A hook that
+  throws or exceeds its 2 s timeout is reported as `severity: 'warn'` with the
+  error text. Failing *open* silently would make the guards decorative.
+- **Errs toward blocking where it matters.** `pre:config-protection` treats an
+  unknown "does this file exist" probe as "exists", because letting an agent
+  overwrite `tsconfig.json` after a failed liveness check is the exact failure
+  the hook exists to prevent.
+- **GateGuard keeps ECC's actual insight** — ask for concrete facts, never "are
+  you sure?" — and raises once per path per run; a file already read this run, a
+  new file, or a comment/whitespace-only change passes without a gate.
+- **Stop gates are real gates.** `stop:unverified-claim` returning exit 2 is fed
+  back to the model as a user turn and the loop continues (up to 2 retries)
+  instead of the run ending. Without that, "tests pass" on an unverified build
+  would be a string we could not act on.
+
+### D19. Hook metadata lives in TypeScript, not in a JSON sidecar
+
+ECC splits `hooks/hooks.json` (what Claude Code loads) from
+`hooks/hooks.metadata.json` (ids, descriptions, fingerprints) because that
+loader rejects unknown keys and its CI verifies the two files against hashes.
+That constraint does not exist for a compiled bundle. `core/src/ecc/registry.ts`
+holds the graph and `hookCatalogue()` renders it for Settings; `test/hooks.test.ts`
+asserts the declared `blocking` flags match the exit codes the hooks actually
+return, which is the property the fingerprint file was protecting.
+
+### D20. Seven ECC skills are vendored; selection is trigger-based
+
+ECC ships 314 skills, each a `SKILL.md` with only `name`, `description` and
+`metadata.origin` in its front matter — no triggers, no globs, no embedding. So
+*selection* has to be ours. Seven skills are relevant to an Android generator
+(`android-clean-architecture`, `kotlin-patterns`,
+`compose-multiplatform-patterns`, `kotlin-coroutines-flows`, `kotlin-testing`,
+`tdd-workflow`, `security-review`); they are vendored verbatim, MIT attribution
+kept in the file and in NOTICE §1b, and bundled as text by esbuild
+(`--loader:.md=text`).
+
+- Selection is **deterministic and cheap**: case-insensitive trigger words plus
+  an agent allow-list plus a 24 000-character budget, so a low-end phone never
+  ships 100 KB of guidance per turn. Truncations and dropped skills are reported,
+  not hidden.
+- A user skill in `.forgex/skills` with the same name **overrides** the built-in,
+  so a generated project can specialise the house style without forking the app.
+- Vendored files carry an attribution comment *above* the `---` front matter;
+  `parseSkillFile` strips leading comments so a faithfully vendored file still
+  parses. (A "must start with `---`" parser failed on exactly this.)
+
+### D21. Skills ship inside the APK, and can be installed into the project
+
+The built-ins are compiled into the bundle so the app works offline and a fresh
+install already has useful guidance. Settings also offers "Install copy", which
+writes the skill into `<project>/.forgex/skills/<name>.md` with our own front
+matter (name, description, triggers, enabled, origin). That file is visible in
+the Workspace screen, editable, and wins over the built-in — the user can read
+and change the exact text that steers their agents, which a hidden prompt could
+not offer.

@@ -8,6 +8,10 @@ import { getAgent } from './definitions';
 import { runAgentLoop, type EngineResult } from './engine';
 import { gate } from '../security/scanner';
 import type { PlanDraft } from '../run/plan';
+import { HookRunner, createHookState } from '../ecc/runner';
+import { DEFAULT_HOOKS } from '../ecc/registry';
+import { selectSkills, renderSkillContext, type SkillSelection } from '../ecc/skills/loader';
+import type { SkillDoc } from '../skills/loader';
 
 export interface AgentRunRequest {
   agent: AgentRole;
@@ -37,6 +41,16 @@ export interface OrchestratorDeps {
   /** Extra markdown injected into every system prompt (AGENTS.md, skills). */
   extraContext?: () => Promise<string>;
   maxRoundsPerAgent?: number;
+  /** ECC hook graph. Defaults to the standard ForgeX graph. */
+  hookRunner?: HookRunner;
+  /** User skills from the workspace, used alongside the built-in ECC skills. */
+  userSkills?: () => Promise<SkillDoc[]>;
+  /** Character budget for injected skill text. */
+  skillBudget?: number;
+  /** Receives each skill selection, for the UI ("which skills loaded"). */
+  onSkillsSelected?: (agent: AgentRole, selection: SkillSelection) => void;
+  /** Receives every hook result (allow/warn/block) for the event stream + UI. */
+  onHook?: (applied: { id: string; exitCode: number; message?: string; severity: string }) => void;
 }
 
 /**
@@ -48,8 +62,30 @@ export interface OrchestratorDeps {
  */
 export class Orchestrator {
   private counter = 0;
+  private readonly hookRunner: HookRunner;
+  private readonly hookState = createHookState();
+  /** additionalContext from the last hook run, keyed by hook id. */
+  private readonly hookContext = new Map<string, string>();
 
-  constructor(private readonly deps: OrchestratorDeps) {}
+  constructor(private readonly deps: OrchestratorDeps) {
+    this.hookRunner = deps.hookRunner ?? new HookRunner({ hooks: DEFAULT_HOOKS });
+  }
+
+  /** Hook ids that can run, for the Settings screen and tests. */
+  hookIds(): string[] {
+    return this.hookRunner.ids();
+  }
+
+  /** Runs a lifecycle hook (SessionStart/PreCompact/Stop) outside a tool call. */
+  async runLifecycleHook(event: 'SessionStart' | 'PreCompact' | 'Stop', extra: { projectMemory?: string; lastAssistantMessage?: string } = {}) {
+    if (extra.projectMemory) this.hookState.set('projectMemory', extra.projectMemory);
+    if (extra.lastAssistantMessage) this.hookState.set('lastAssistantMessage', extra.lastAssistantMessage);
+    return this.hookRunner.dispatch(event, {
+      workspaceRoot: this.deps.workspaceRoot,
+      state: this.hookState,
+      now: Date.now(),
+    });
+  }
 
   private nextAgentId(role: AgentRole): string {
     this.counter += 1;
@@ -72,17 +108,49 @@ export class Orchestrator {
       ? this.deps.registry.subset(agent.tools.filter((t) => !request.excludeTools!.includes(t)))
       : this.deps.registry.subset(agent.tools);
     const extra = this.deps.extraContext ? await this.deps.extraContext() : '';
+    // ECC skills: built-in (vendored) + user skills, selected by trigger for this
+    // agent and this task, under a character budget.
+    const userSkills = this.deps.userSkills ? await this.deps.userSkills() : [];
+    const selection = selectSkills({
+      task: request.task,
+      agent: agent.id,
+      maxCharacters: this.deps.skillBudget ?? 24_000,
+      userSkills,
+    });
+    this.deps.onSkillsSelected?.(request.agent, selection);
+    const skillContext = renderSkillContext(selection);
+    // SessionStart: ECC's memory-persistence hook injects project memory (and
+    // anything else it wants to remind the model of) as additionalContext.
+    const session = await this.hookRunner.dispatch('SessionStart', {
+      workspaceRoot: this.deps.workspaceRoot,
+      state: this.hookState,
+      now: Date.now(),
+    });
+    const sessionContext = session.results
+      .map((applied) => this.hookContext.get(applied.id))
+      .filter((value): value is string => Boolean(value))
+      .join('\n\n');
+    if (selection.skills.length) {
+      await events.append({
+        kind: 'note',
+        agentId,
+        detail: `skills loaded (${selection.characters} chars): ${selection.skills.map((skill) => `${skill.name}[${skill.origin}]`).join(', ')}`,
+      });
+    }
     const systemPrompt = [
       agent.instructions,
       '',
       `## Available tools\n${tools.names().map((n) => `- ${n}`).join('\n')}`,
       `## Workspace\n${this.deps.workspaceRoot}`,
-      extra ? `\n## Project context (AGENTS.md, skills, learned notes)\n${extra}` : '',
+      extra ? `\n## Project context (AGENTS.md, learned notes)\n${extra}` : '',
+      sessionContext ? `\n## Session context (ECC SessionStart)\n${sessionContext}` : '',
+      skillContext ? `\n## Skills (ECC-derived guidance; follow where relevant)\n${skillContext}` : '',
       parentAgentId ? `\nYou were spawned by ${parentAgentId}.` : '',
     ]
       .filter(Boolean)
       .join('\n');
 
+    let lastStopBlock: { id: string; message: string } | undefined;
     const result = await runAgentLoop({
       llm: this.deps.llm(agent),
       registry: tools,
@@ -91,6 +159,55 @@ export class Orchestrator {
       systemPrompt,
       userPrompt: request.context ? `${request.task}\n\n## Additional context\n${request.context}` : request.task,
       maxRounds: request.maxRounds ?? this.deps.maxRoundsPerAgent ?? 30,
+      // ECC pre:compact runs when the condenser is about to drop history, so the
+      // checkpoint is written before the information is gone.
+      onBeforeRound: async ({ contextTokens, condensed }) => {
+        if (!condensed) return;
+        const outcome = await this.hookRunner.dispatch('PreCompact', {
+          workspaceRoot: this.deps.workspaceRoot,
+          state: this.hookState,
+          contextTokens,
+          now: Date.now(),
+        });
+        for (const applied of outcome.results) {
+          this.deps.onHook?.(applied);
+          await events.append({ kind: 'note', agentId, detail: `hook ${applied.id}: ${applied.message ?? 'ok'}` });
+        }
+      },
+      // Stop: ECC end-of-run gates. A block forces another round instead of
+      // ending the run, so "tests pass" cannot be claimed without a test run.
+      beforeComplete: async (final) => {
+        lastStopBlock = undefined;
+        const outcome = await this.hookRunner.dispatch('Stop', {
+          workspaceRoot: this.deps.workspaceRoot,
+          state: this.hookState,
+          now: Date.now(),
+        });
+        for (const applied of outcome.results) {
+          this.deps.onHook?.(applied);
+          if (applied.severity !== 'info') {
+            await events.append({
+              kind: 'note',
+              agentId,
+              detail: `hook ${applied.id} ${applied.exitCode === 2 ? 'BLOCKED' : applied.severity}: ${applied.message ?? ''}`,
+            });
+          }
+        }
+        if (outcome.blocked) lastStopBlock = { id: outcome.by, message: outcome.message };
+        return { blocked: outcome.blocked, message: outcome.blocked ? outcome.message : undefined };
+      },
+      hookRunner: this.hookRunner,
+      hookState: this.hookState,
+      onHook: (applied) => {
+        const context = this.hookRunner.lastContext(applied.id);
+        if (context) this.hookContext.set(applied.id, context);
+        this.deps.onHook?.(applied);
+        void events.append({
+          kind: 'note',
+          agentId,
+          detail: `hook ${applied.id} ${applied.exitCode === 2 ? 'BLOCKED' : applied.severity}${applied.message ? `: ${applied.message.slice(0, 300)}` : ''}`,
+        });
+      },
       signal: request.signal,
       onAssistantMessage: async (content) => {
         await events.append({ kind: 'assistant_message', agentId, content: content.slice(0, 4000) });
@@ -113,6 +230,13 @@ export class Orchestrator {
       summary: `${result.reason} after ${result.rounds} rounds, ${result.toolCalls} tool calls`,
     });
     const output = result.finalMessage || result.messages.filter((m) => m.role === 'assistant').map((m) => m.content ?? '').join('\n');
+    if (lastStopBlock) {
+      await events.append({
+        kind: 'gate_blocked',
+        agentId,
+        detail: `stop gate ${lastStopBlock.id} blocked the run: ${lastStopBlock.message.slice(0, 400)}`,
+      });
+    }
     void platform;
     return { agent: request.agent, result, output };
   }

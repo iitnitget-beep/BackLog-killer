@@ -6,5 +6,5 @@ cd "$(dirname "$0")/.."
 BUNDLE=".cli/cli.mjs"
 mkdir -p .cli
 npx esbuild scripts/cli.ts --bundle --platform=node --format=esm \
-  --external:node:* --outfile="$BUNDLE" --log-level=error
+  --loader:.md=text --external:node:* --outfile="$BUNDLE" --log-level=error
 exec node "$BUNDLE" "$@"

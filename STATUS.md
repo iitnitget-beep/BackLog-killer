@@ -6,7 +6,7 @@ Last verified: 2026-11-16, against the head of
 
 | Job | Result |
 | --- | --- |
-| Core tests (typecheck, 155 tests, CLI smoke, bundle boot check) | success |
+| Core tests (typecheck, 196 tests, CLI smoke, bundle boot check) | success |
 | Android unit tests (Robolectric sandbox/keystore/kv) | success |
 | Build debug APK | success — `forgex-debug-apk`, 4,174,616 bytes |
 
@@ -21,11 +21,12 @@ stated reason. **NOT DONE** = not implemented.
 | Check | Result |
 | --- | --- |
 | TypeScript typecheck (`tsc --noEmit`, strict) | **pass** |
-| Core unit/integration tests | **155 pass**, 15 files |
+| Core unit/integration tests | **196 pass**, 17 files |
 | Kotlin unit tests (Robolectric) | **pass** in CI |
 | Debug APK built in CI | **pass** — 4.17 MB artifact `forgex-debug-apk` |
 | APK contains the web bundle | **pass** — CI asserts `assets/app/index.html` and `assets/app/ui.js` |
 | Built UI bundle boots and renders | **pass** — `scripts/verify-bundle.mjs` runs the real esbuild output in a DOM sandbox and checks the home screen, tab bar and preview badge |
+| UI bundle size (7 vendored skills included) | 297,018 B → 83,807 B gzipped |
 | APK installs and launches on a physical device | **NOT DONE** — no device or emulator in this environment; the launch test (`AppLaunchTest`) is an instrumented test that has not been executed, and CI cannot run it. This is the one acceptance criterion from M1/M6 that remains unverified. |
 
 Honest note on that gap: `assembleDebug` succeeding proves the app compiles, the
@@ -48,6 +49,27 @@ instrumented test, treat "it launches on a phone" as unproven.
 | Project list, offline browsing of past projects | WORKING | projects persisted via the KV port |
 | Instrumented smoke test written | PARTIAL | `AppLaunchTest` exists, cannot run without a device |
 | Real-device launch | NOT DONE | no device available here |
+
+### ECC port (hooks + skills) · **WORKING**
+
+| Feature | Status | Evidence |
+| --- | --- | --- |
+| Hook engine with ECC's exit-code contract (0 allow / 2 block, first block wins, declaration order, 2 s timeout) | WORKING | `test/hooks.test.ts` — 26 tests: ordering, first-block-wins, warn-only, crash → warn, timeout |
+| 9 hooks shipped (5 blocking) | WORKING | `test/hooks.test.ts` covers each hook's allow/block/warn branch |
+| Hooks run on every tool call, before the tool, via one choke point | WORKING | `test/hooks.test.ts` "hooks in the tool choke point": blocked write leaves no file, clean write lands, new sensitive file not gated, existing config refused |
+| Secret gate survives a caller that supplies no hook runner | WORKING | `test/hooks.test.ts` (`ESECRET`) |
+| `stop:unverified-claim` forces another round instead of ending the run | WORKING | `test/hooks.test.ts` "the Stop gate forces a retry": block → user turn → 2 rounds; gives up after `maxStopRetries` |
+| Stop gate recorded on the event stream | WORKING | `test/hooks.test.ts` asserts a `gate_blocked` event naming `stop:unverified-claim` |
+| `session:start` injects project memory; `pre:compact` checkpoints when the condenser fires | WORKING | orchestrator wiring; `pre:compact` fires only on `condensed: true` |
+| 7 ECC skills vendored verbatim (MIT, attribution in file + NOTICE §1b) | WORKING | `test/skills.test.ts` asserts names, sizes, attribution header, licence |
+| Trigger + agent-role + budget selection | WORKING | `test/skills.test.ts`: security-review only for the security reviewer, budget truncation reported |
+| User skill overrides a built-in of the same name | WORKING | `test/skills.test.ts` |
+| Skills reach the real system prompt; selection recorded on the event stream | WORKING | `test/skills.test.ts` asserts `<skill …>` in `ScriptedLlm.systemPrompt()` |
+| Skills install into `<project>/.forgex/skills` and re-parse with front matter | WORKING | `test/skills.test.ts` install + `SkillLibrary.list()` round trip |
+| Vendored files whose attribution comment precedes `---` parse correctly | WORKING | `stripLeadingComments` + test over all 7 files |
+| Settings shows the hook catalogue + built-in skills; Home/Build show an "ECC guards" strip | WORKING | `test/ui.test.ts` "UI exposes the ECC layer" |
+| "Preview selection" / "Install copy"/"Install all" wired in the UI | PARTIAL | render + handlers exist and are typechecked; the buttons are only exercised through the DOM shim, not clicked on a device |
+| Hook execution on a physical device | NOT DONE | no device here; the logic is platform-independent and covered in Node |
 
 ### M2 — Single-agent loop · **WORKING**
 

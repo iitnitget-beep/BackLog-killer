@@ -35,8 +35,46 @@ below as its licence requires.
     secret scan before every write and every push
     (`core/src/security/scanner.ts`), lint-after-edit hook
     (`core/src/security/lintHook.ts`).
-- **Not used:** Claude Code plugin installation, hooks JSON mechanics, `skills/`
-  registry format. Our skills format is our own (`core/src/skills/loader.ts`).
+### 1b. ECC hook engine and skill bundle (direct port, added later)
+
+The first pass only borrowed *design*. A later pass ported ECC's runtime model
+into real code, and **seven ECC skill documents are vendored verbatim** into the
+APK. That is a redistribution, so it is spelled out file by file:
+
+| ForgeX file | ECC source (commit `d2ef268`) | Status |
+| --- | --- | --- |
+| `core/src/ecc/types.ts` | `hooks/README.md` (exit-code contract, matcher grammar) | reimplemented |
+| `core/src/ecc/runner.ts` | `hooks/README.md`, `scripts/hooks/run-with-flags.js` | reimplemented |
+| `core/src/ecc/hooks/configProtection.ts` | `scripts/hooks/config-protection.js` | ported, extended with Kotlin/Android configs |
+| `core/src/ecc/hooks/docFileWarning.ts` | `scripts/hooks/doc-file-warning.js` | ported, directory list adapted |
+| `core/src/ecc/hooks/consoleLog.ts` | `scripts/hooks/check-console-log.js` | ported, `console.log` → Kotlin `println`/`Log.*` |
+| `core/src/ecc/hooks/gateGuard.ts` | `scripts/hooks/gateguard-fact-force.js` | ported, question sets written for Android targets |
+| `core/src/ecc/hooks/stopGates.ts` | `hooks/memory-persistence/hooks.json`, `scripts/hooks/suggest-compact.js` | idea only, reimplemented |
+| `core/src/ecc/hooks/secretScan.ts` | — | ForgeX wrapper around our own scanner |
+| `core/src/ecc/hooks/destructiveCommand.ts` | — | ForgeX wrapper around our own shell policy |
+| `core/src/ecc/skills/android-clean-architecture.md` | `skills/android-clean-architecture/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/kotlin-patterns.md` | `skills/kotlin-patterns/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/compose-multiplatform-patterns.md` | `skills/compose-multiplatform-patterns/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/kotlin-coroutines-flows.md` | `skills/kotlin-coroutines-flows/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/kotlin-testing.md` | `skills/kotlin-testing/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/tdd-workflow.md` | `skills/tdd-workflow/SKILL.md` | **verbatim, MIT** |
+| `core/src/ecc/skills/security-review.md` | `skills/security-review/SKILL.md` | **verbatim, MIT** |
+
+Each vendored file keeps an HTML comment at the top naming the upstream
+repository, the exact commit, the upstream path, the MIT licence and the
+copyright holder, and `core/scripts/prepare-ecc-skills.mjs` is the script that
+produced them (re-run it against a fresh ECC clone to refresh). The MIT text
+below applies to those seven files exactly as it does to ECC itself.
+
+What stays unported: ECC's `commands/` slash commands, `agents/` definitions,
+`manifests/` install profiles, the `ecc2/` Rust rewrite and the PowerShell hooks.
+ECC's `hooks.json` + `hooks.metadata.json` sidecar split is not reproduced — we
+keep hook metadata in TypeScript (`core/src/ecc/registry.ts`) because a compiled
+bundle has no JSON loader to reject unknown keys.
+
+- **Not used:** Claude Code plugin installation. Our *user* skills format stays
+  our own (`core/src/skills/loader.ts`) so users can write microagents; the ECC
+  files are parsed by it too.
 
 ## 2. qwen-code — https://github.com/QwenLM/qwen-code
 

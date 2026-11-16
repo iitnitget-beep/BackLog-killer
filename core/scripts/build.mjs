@@ -16,6 +16,8 @@ await esbuild.build({
   outfile: `${outdir}core.js`,
   sourcemap: true,
   logLevel: 'info',
+  // The vendored ECC skills are Markdown; they ship as strings inside the bundle.
+  loader: { '.md': 'text' },
 });
 
 // The UI bundle: the same browser-safe core plus the DOM shell.
@@ -27,6 +29,8 @@ await esbuild.build({
   outfile: `${outdir}ui.js`,
   sourcemap: true,
   logLevel: 'info',
+  // The vendored ECC skills are Markdown; they ship as strings inside the bundle.
+  loader: { '.md': 'text' },
 });
 
 for (const file of await readdir('src/ui')) {

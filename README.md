@@ -135,13 +135,57 @@ Full attribution and licence texts are in [NOTICE.md](NOTICE.md).
 
 | Repo | Licence | Taken | Left behind |
 | --- | --- | --- | --- |
-| **ECC** (`affaan-m/ECC`) | MIT | Prompt defense baseline; planner/reviewer/security-reviewer/error-resolver prompt structure and output discipline; the plan→implement→verify→fresh-review→fix loop; hook-style checks reimplemented as our own secret scan (pre-write, pre-push) and lint-after-edit. | Claude Code plugin install mechanics, hooks JSON. |
+| **ECC** (`affaan-m/ECC`) | MIT | **Runtime port, not prompt text:** hook engine with ECC's exit-code contract (`core/src/ecc/`: 9 hooks over 6 events, first block wins, 2 s timeout, crash = warn), wired into the single tool choke point; 7 ECC `SKILL.md` documents vendored verbatim and selected per agent by trigger words under a 24 k-char budget (`core/src/ecc/skills/`); Settings shows the armed hooks and installs any skill into the project for editing. Earlier pass also carried the planner/reviewer/security-reviewer prompt structure and the plan→implement→verify→fresh-review→fix loop. | Claude Code plugin install mechanics, `hooks.json`/sidecar JSON, `commands/`, `manifests/`, `ecc2/`. |
 | **qwen-code** (`QwenLM/qwen-code`) | Apache-2.0 | The single-agent loop and its stop-reason vocabulary; `ToolInvocation`-style tool contract with `getDefaultPermission`; loop-detection thresholds (5 identical calls, 10 identical contents); the tool set. | Terminal UI, `@google/genai` types, Node-only APIs. |
 | **freebuff / codebuff** (`CodebuffAI/freebuff`) | Apache-2.0 | Declarative agent definitions with per-agent tool lists; parent-spawns-helpers orchestration; batching guidance; bounded refinement loop. | Hosted backend, their free-model access and terms, ads, Docker. |
 | **OpenHands** (`OpenHands/OpenHands`) | MIT | Action→Observation event model with a persisted replayable log; context condensation that keeps recent turns and never splits tool pairs; microagents loaded by keyword trigger. | The Python platform, Docker runtime, `enterprise/`. |
 
 All four were cloned read-only into `/home/user/refs` (outside this repo) and
-studied; none is installed, vendored or executed.
+studied; none is installed or executed at runtime. The exception is the seven ECC
+skill documents noted above, which are **vendored source files** (MIT, attribution
+kept in each file and listed in NOTICE §1b) because they ship inside the APK.
+
+---
+
+## Using the ECC layer (what it changes on your phone)
+
+ECC is a Claude Code plugin. You cannot install a Claude Code plugin into an
+Android app, so the two parts that survive without that harness were ported:
+the **hook graph** and the **skills**.
+
+**1. Guards that can actually refuse.** Every tool call goes through
+`core/src/agent/executor.ts` → `HookRunner`. Nine hooks are armed, five of them
+blocking:
+
+| Hook | Event | Blocks? | What it stops |
+| --- | --- | --- | --- |
+| `pre:secret-scan` | PreToolUse | yes | writing an API key, token, private key or keystore password |
+| `pre:destructive-command` | PreToolUse | yes | `git push --force`, `rm -rf /`, branch deletion |
+| `pre:config-protection` | PreToolUse | yes | "fixing" a failing lint by editing `tsconfig.json`/`detekt.yml` |
+| `pre:edit-write:gateguard-fact-force` | PreToolUse | yes (once) | editing auth/CI/manifest/Gradle files without reading them first |
+| `stop:unverified-claim` | Stop | yes | ending the run with "tests pass" when no test ran |
+| `pre:write:doc-file-warning` | PreToolUse | warn | `NOTES.md`/`SCRATCH.md` debris |
+| `pre:compact` | PreCompact | warns | losing context without a checkpoint |
+| `session:start` | SessionStart | — | injects AGENTS.md + learned notes |
+| `stop:check-debug-logging` | Stop | warns | leftover `println`/`Log.d` in shipped Kotlin |
+
+You see them live: the Home and Build screens have an **ECC guards** strip, and
+Settings lists each hook with its source. Every hook result is also a line in the
+event stream (`hook pre:secret-scan BLOCKED: …`).
+
+**2. Skills the agents actually receive.** Seven ECC skills ship inside the APK
+(Kotlin/Compose architecture, coroutines, testing, TDD, security review). They are
+not dumped into every prompt: for each agent and task, trigger words are matched
+against its allow-list, and the selected text is injected under a 24 000-character
+budget. Settings → **Skills** shows the built-ins; **Preview selection** shows
+exactly what each agent would receive for the current request; **Install copy**
+writes a skill into `<project>/.forgex/skills/`, where you can edit it in
+Workspace and your copy then wins over the built-in.
+
+**3. What is not ported.** ECC's slash commands, its `agents/` definitions, the
+install manifests, the `ecc2/` Rust rewrite and the PowerShell hooks. Its
+`hooks.json`/metadata-sidecar split is unnecessary for a compiled bundle (D19).
+See DECISIONS D18–D21 for the reasoning and STATUS.md for what is verified.
 
 ---
 

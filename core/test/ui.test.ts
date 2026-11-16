@@ -39,6 +39,38 @@ function installDom(): { container: ShimElement; rendered: () => string } {
   return { container, rendered: () => container.innerHTML };
 }
 
+describe('UI exposes the ECC layer', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('shows the armed hooks on the home screen', async () => {
+    const { rendered } = installDom();
+    await import('../src/ui/main');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const html = rendered();
+    expect(html).toContain('ECC guards');
+    expect(html).toContain('pre:secret-scan');
+    expect(html).toContain('pre:destructive-command');
+    expect(html).toContain('stop:unverified-claim');
+  });
+
+  it('lists the vendored skills and the hook catalogue in Settings', async () => {
+    const { rendered } = installDom();
+    const mod = await import('../src/ui/main');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    (window as unknown as { __forgexNavigate: (screen: string) => void }).__forgexNavigate('settings');
+    const html = rendered();
+    expect(html).toContain('Hooks (ECC guards)');
+    expect(html).toContain('pre:config-protection');
+    expect(html).toContain('kotlin-testing');
+    expect(html).toContain('tdd-workflow');
+    expect(html).toContain('Install all ECC skills');
+    expect(html).toContain('ECC port');
+    expect(typeof mod).toBe('object');
+  });
+});
+
 describe('UI renders', () => {
   beforeEach(() => {
     vi.resetModules();

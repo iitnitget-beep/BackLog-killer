@@ -5,6 +5,8 @@ import type { ApprovalManager } from './approval';
 import { executeTool } from './executor';
 import { LoopDetector, type LoopVerdict } from './loopDetection';
 import { condense, estimateTokens } from '../context/condenser';
+import type { HookRunner } from '../ecc/runner';
+import type { HookState } from '../ecc/types';
 
 export interface EngineOptions {
   llm: LlmClient;
@@ -18,6 +20,20 @@ export interface EngineOptions {
   loopDetector?: LoopDetector;
   /** Opening user turn. Without it the model only sees the system prompt. */
   userPrompt?: string;
+  /** Called before each model round with the estimated context size (ECC pre:compact). */
+  onBeforeRound?: (info: { round: number; contextTokens: number; condensed: boolean }) => void | Promise<void>;
+  /**
+   * ECC Stop gate. Called when the model stops calling tools; if it returns
+   * `blocked`, the message is fed back as a user turn and the loop continues,
+   * exactly like ECC's `exit 2` on Stop.
+   */
+  beforeComplete?: (finalMessage: string) => Promise<{ blocked: boolean; message?: string }>;
+  /** How many times a blocking Stop gate may force another round. */
+  maxStopRetries?: number;
+  /** ECC hook graph; when supplied, PreToolUse/PostToolUse guards run per tool call. */
+  hookRunner?: HookRunner;
+  hookState?: HookState;
+  onHook?: (applied: { id: string; exitCode: number; message?: string; severity: string }) => void;
   signal?: AbortSignal;
   onAssistantMessage?: (content: string) => void;
   onToolResult?: (toolName: string, ok: boolean, output: string) => void;
@@ -55,13 +71,16 @@ export async function runAgentLoop(options: EngineOptions): Promise<EngineResult
   let rounds = 0;
   let toolCalls = 0;
   let finalMessage = '';
+  let stopRetries = 0;
 
   for (; rounds < maxRounds; rounds += 1) {
     if (options.signal?.aborted) {
       return { reason: 'cancelled', finalMessage, rounds, toolCalls, messages: working };
     }
+    const before = estimateTokens(working);
     const condensed = await condense(working, { maxTokens: options.maxTokensPerRequest ?? 24_000 });
     working = condensed.messages;
+    await options.onBeforeRound?.({ round: rounds, contextTokens: before, condensed: condensed.condensed });
     let response: CompletionResponse;
     try {
       response = await options.llm.complete({
@@ -77,6 +96,8 @@ export async function runAgentLoop(options: EngineOptions): Promise<EngineResult
     const content = response.content ?? '';
     if (content) {
       finalMessage = content;
+      // Visible to the Stop gates before they run (ECC hooks read a transcript).
+      options.hookState?.set('lastAssistantMessage', content);
       options.onAssistantMessage?.(content);
     }
     const contentVerdict = content ? detector.recordContent(content) : { looped: false };
@@ -85,6 +106,15 @@ export async function runAgentLoop(options: EngineOptions): Promise<EngineResult
     }
     if (response.toolCalls.length === 0) {
       working.push({ role: 'assistant', content });
+      const gate = options.beforeComplete ? await options.beforeComplete(content) : { blocked: false };
+      if (gate.blocked && stopRetries < (options.maxStopRetries ?? 2)) {
+        stopRetries += 1;
+        working.push({
+          role: 'user',
+          content: `A Stop hook refused to let this run finish:\n${gate.message ?? 'verification required'}\nDo the missing verification now, then report.`,
+        });
+        continue;
+      }
       return { reason: 'completed', finalMessage, rounds: rounds + 1, toolCalls, messages: working };
     }
     working.push({ role: 'assistant', content, tool_calls: response.toolCalls });
@@ -102,8 +132,22 @@ export async function runAgentLoop(options: EngineOptions): Promise<EngineResult
         registry: options.registry,
         approvals: options.approvals,
         workspaceRoot: options.workspaceRoot,
+        hookRunner: options.hookRunner,
+        hookState: options.hookState,
+        onHook: options.onHook,
       });
       options.onToolResult?.(call.function.name, outcome.envelope.ok, outcome.envelope.output);
+      if (options.hookState) {
+        if (call.function.name === 'read_file' && typeof args['path'] === 'string') {
+          const read = (options.hookState.get<string[]>('readFiles') ?? []).concat(String(args['path']));
+          options.hookState.set('readFiles', [...new Set(read)]);
+          options.hookState.set(`content:${String(args['path'])}`, outcome.envelope.output);
+        }
+        if (call.function.name === 'run_command' || call.function.name === 'run_tests' || call.function.name === 'build') {
+          options.hookState.set('verificationRan', outcome.envelope.ok || true);
+        }
+
+      }
       working.push(toolResultMessage(call, outcome.envelope.output));
     }
   }

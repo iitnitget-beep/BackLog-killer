@@ -1,4 +1,5 @@
 import type { Platform } from '../platform/types';
+import { safePath as safePathFrom } from '../platform/types';
 import type { PermissionClass, ToolContext, ToolDefinition, ToolResultEnvelope } from './types';
 import { ToolError } from './types';
 import { editFileTool, globTool, grepTool, listDirTool, readFileTool, writeFileTool } from './filesystem';
@@ -12,6 +13,8 @@ export interface ToolRegistryOptions {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  /** Set when the registry is built from a platform, so hooks can check existence. */
+  workspaceExists?: (relativePath: string) => Promise<boolean>;
 
   constructor(tools: ToolDefinition[]) {
     for (const tool of tools) this.tools.set(tool.name, tool);
@@ -34,7 +37,10 @@ export class ToolRegistry {
       ...extra,
     ];
     const exclude = new Set(options.exclude ?? []);
-    return new ToolRegistry(tools.filter((tool) => !exclude.has(tool.name)));
+    const registry = new ToolRegistry(tools.filter((tool) => !exclude.has(tool.name)));
+    registry.workspaceExists = async (relativePath: string) =>
+      platform.fs.exists(safePathFrom(root, relativePath));
+    return registry;
   }
 
   get(name: string): ToolDefinition | undefined {

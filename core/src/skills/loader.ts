@@ -16,10 +16,26 @@ export interface SkillDoc {
   enabled: boolean;
 }
 
+/**
+ * Vendored skills carry an HTML attribution comment above the front matter
+ * (our ECC files do), so leading comments and blank lines are stripped before
+ * the `---` block is read. Without this a faithfully vendored file parses as a
+ * bodyless blob.
+ */
+export function stripLeadingComments(raw: string): string {
+  let text = raw.replace(/^\uFEFF/, '');
+  for (;;) {
+    const next = text.replace(/^\s*<!--[\s\S]*?-->\s*/, '');
+    if (next === text) return text;
+    text = next;
+  }
+}
+
 export function parseSkillFile(path: string, raw: string): SkillDoc {
-  const frontMatterMatch = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(raw);
+  const source = stripLeadingComments(raw);
+  const frontMatterMatch = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(source);
   const meta: Record<string, string> = {};
-  let body = raw;
+  let body = source;
   if (frontMatterMatch) {
     body = frontMatterMatch[2];
     for (const line of frontMatterMatch[1].split('\n')) {

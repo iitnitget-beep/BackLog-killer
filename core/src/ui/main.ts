@@ -12,6 +12,9 @@ import type { ForgeEvent } from '../events/types';
 import { GitHubDeviceFlow } from '../github/oauth';
 import { GitHubClient } from '../github/client';
 import { SkillLibrary } from '../skills/loader';
+import { hookCatalogue } from '../ecc/registry';
+import { BUILT_IN_SKILLS, findBuiltInSkill } from '../ecc/skills/bundle';
+import { selectSkills, installSkillToWorkspace } from '../ecc/skills/loader';
 import { renderHighlighted } from './highlight';
 import { diffLines } from './diff';
 
@@ -63,6 +66,8 @@ interface AppState {
   toast: string | null;
   confirm: { title: string; body: string; onConfirm: () => void } | null;
   skills: { name: string; path: string }[];
+  /** Skills the last agent turn actually received (ECC built-ins + user skills). */
+  activeSkills: string[];
   githubUser: string | null;
   deviceFlow: { userCode: string; verificationUri: string } | null;
   fileTree: { name: string; type: string; path: string }[];
@@ -103,6 +108,7 @@ const state: AppState = {
   toast: null,
   confirm: null,
   skills: [],
+  activeSkills: [],
   githubUser: null,
   deviceFlow: null,
   fileTree: [],
@@ -321,6 +327,7 @@ function renderHome(): string {
              add a key in Settings to run the agents.
            </div>`}
     </div>
+    ${renderEccStrip()}
     <div class="section-title">Projects</div>
     ${state.projects.length === 0
       ? `<div class="card muted small">No projects yet. Your first build will appear here and stay browsable offline.</div>`
@@ -399,6 +406,7 @@ function renderBuild(): string {
       ${lastMessages.length ? `<div class="section-title">Agent said</div>${lastMessages.map((message) => `<div class="muted small" style="margin-bottom:6px">${esc((message.content ?? '').slice(0, 300))}</div>`).join('')}` : ''}
     </div>
     ${plan ? renderPlanCard(plan) : ''}
+    ${renderEccStrip()}
     <div class="card">
       <div class="row" style="justify-content:space-between"><h3 style="margin:0">Live log</h3><span class="muted small">${state.events.length} events</span></div>
       <div class="log" style="margin-top:8px">${esc(
@@ -536,10 +544,31 @@ function renderSettings(): string {
       <p class="muted small">Destructive commands (force push, deleting branches) always need explicit confirmation, in every mode.</p>
     </div>
     <div class="card">
-      <h3>Skills & microagents</h3>
-      <p class="muted small">Markdown files in .forgex/skills. Files with triggers load only when the task matches.</p>
-      ${state.skills.length ? state.skills.map((skill) => `<div class="kv"><span>${esc(skill.name)}</span><span class="small muted">${esc(skill.path.split('/').pop())}</span></div>`).join('') : '<p class="muted small">No skills yet.</p>'}
+      <h3>Skills</h3>
+      <p class="muted small">Skills are markdown guidance an agent receives only when the task matches its triggers. The ${BUILT_IN_SKILLS.length} built-ins below are vendored from ECC (MIT) and ship inside the app; install one to edit it, or write your own.</p>
+      <p class="muted small"><strong>Built in (ECC)</strong></p>
+      ${BUILT_IN_SKILLS.map((skill) => {
+        const installed = state.skills.some((entry) => entry.name === skill.name);
+        return `<div class="kv"><span>${esc(skill.name)}${installed ? ' <span class="small muted">(your copy wins)</span>' : ''}</span>
+          <span class="small muted">${esc(skill.agents.join(', '))}</span></div>
+          <p class="muted small">${esc(skill.summary)} <button class="ghost tiny" data-install-skill="${esc(skill.name)}">${installed ? 'Refresh copy' : 'Install copy'}</button></p>`;
+      }).join('')}
+      <p class="muted small"><strong>Your skills (.forgex/skills)</strong></p>
+      ${state.skills.length ? state.skills.map((skill) => `<div class="kv"><span>${esc(skill.name)}</span><span class="small muted">${esc(skill.path.split('/').pop())}</span></div>`).join('') : '<p class="muted small">No skills of your own yet.</p>'}
       <button class="ghost" id="new-skill">New skill</button>
+      <button class="ghost" id="install-all-skills">Install all ECC skills</button>
+      <button class="ghost" id="preview-skills">Preview selection</button>
+      <div id="skill-preview"></div>
+    </div>
+    <div class="card">
+      <h3>Hooks (ECC guards)</h3>
+      <p class="muted small">Hooks run on every tool call, in order, before the tool runs. A blocking hook stops the call and tells the agent why. This is a port of ECC's hook engine, not a copy of its shell scripts.</p>
+      ${hookCatalogue()
+        .map(
+          (hook) => `<div class="kv"><span>${hook.blocking ? '⛔' : '✓'} ${esc(hook.id)}</span><span class="small muted">${esc(hook.event)} · ${esc(hook.derivation)}</span></div>
+            <p class="muted small">${esc(hook.description)}</p>`,
+        )
+        .join('')}
     </div>
     <div class="card">
       <h3>Secrets</h3>
@@ -551,6 +580,23 @@ function renderSettings(): string {
       <div class="kv"><span>Platform</span><span>${esc(state.mode)}</span></div>
       <div class="kv"><span>Approval</span><span>${esc(state.settings.approvalMode)}</span></div>
       <div class="kv"><span>Provider</span><span>${esc(state.settings.presetId)}</span></div>
+    </div>`;
+}
+
+/** Live ECC strip: which hooks are armed and which skills the last turn loaded. */
+function renderEccStrip(): string {
+  if (state.screen !== 'build' && state.screen !== 'home') return '';
+  const hooks = hookCatalogue();
+  const blocking = hooks.filter((hook) => hook.blocking).length;
+  const active = state.activeSkills;
+  return `
+    <div class="card">
+      <h3>ECC guards</h3>
+      <p class="muted small">${hooks.length} hooks armed, ${blocking} can refuse an action. Every tool call passes through them before it runs.</p>
+      <div class="chips">${hooks
+        .map((hook) => `<span class="chip ${hook.blocking ? 'chip-block' : ''}" title="${esc(hook.description)}">${hook.blocking ? '⛔' : '✓'} ${esc(hook.id)}</span>`)
+        .join('')}</div>
+      <p class="muted small">Skills loaded for the last turn: ${active.length ? active.map((name) => `<code>${esc(name)}</code>`).join(' ') : 'none yet (they load when a plan or edit matches their triggers)'}</p>
     </div>`;
 }
 
@@ -685,6 +731,11 @@ function bind(): void {
     toast(`Project seed ${state.settings.seedScaffold ? 'on' : 'off'}`);
   });
   el('new-skill')?.addEventListener('click', () => void createSkill());
+  document.querySelectorAll<HTMLElement>('[data-install-skill]').forEach((node) =>
+    node.addEventListener('click', () => void installEccSkill(node.dataset.installSkill ?? '')),
+  );
+  el('install-all-skills')?.addEventListener('click', () => void installAllEccSkills());
+  el('preview-skills')?.addEventListener('click', () => void previewSkillSelection());
   el('scan-now')?.addEventListener('click', () => void scanWorkspace());
   el('save-github')?.addEventListener('click', () => void saveGithubTarget());
   el('github-login')?.addEventListener('click', () => void startDeviceFlow());
@@ -794,6 +845,42 @@ async function createSkill(): Promise<void> {
   await refreshSkills();
   toast('Skill created.');
   render();
+}
+
+async function installEccSkill(name: string): Promise<void> {
+  const skill = findBuiltInSkill(name);
+  if (!skill) return;
+  const root = `${state.activeProjectId ? `/workspace/${state.activeProjectId}` : '/workspace/demo'}/.forgex/skills`;
+  const library = new SkillLibrary(state.platform, root);
+  await installSkillToWorkspace(library, root, skill);
+  await refreshSkills();
+  toast(`${name} installed into .forgex/skills — edit it in Workspace.`);
+  render();
+}
+
+async function installAllEccSkills(): Promise<void> {
+  for (const skill of BUILT_IN_SKILLS) {
+    await installEccSkill(skill.name);
+  }
+  toast('All ECC skills installed.');
+}
+
+/** Shows exactly which skills an agent would receive for the current request. */
+async function previewSkillSelection(): Promise<void> {
+  const root = `${state.activeProjectId ? `/workspace/${state.activeProjectId}` : '/workspace/demo'}/.forgex/skills`;
+  const userSkills = await new SkillLibrary(state.platform, root).list();
+  const task = state.request || 'build an Android app';
+  const rows = ['planner', 'editor', 'reviewer', 'security-reviewer', 'test-fixer']
+    .map((agent) => {
+      const selection = selectSkills({ task, agent, userSkills });
+      const names = selection.skills.map((skill) => `${skill.name} (${skill.origin}, ${skill.content.length} chars)`);
+      return `<div class="kv"><span>${esc(agent)}</span><span class="small muted">${names.length ? names.map(esc).join(', ') : 'no skills match'}</span></div>`;
+    })
+    .join('');
+  const target = document.getElementById('skill-preview');
+  if (target) {
+    target.innerHTML = `<p class="muted small">For the request “${esc(task.slice(0, 120))}”:</p>${rows}`;
+  }
 }
 
 async function scanWorkspace(): Promise<void> {

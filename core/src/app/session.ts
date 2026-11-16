@@ -9,6 +9,9 @@ import { EventStore } from '../events/store';
 import { ToolRegistry } from '../tools/registry';
 import { ProjectMemoryStore } from '../memory/project';
 import { SkillLibrary } from '../skills/loader';
+import type { SkillSelection } from '../ecc/skills/loader';
+import { hookCatalogue } from '../ecc/registry';
+import { BUILT_IN_SKILLS } from '../ecc/skills/bundle';
 import { Pipeline, commitMessage, type WorkspaceFile } from '../run/pipeline';
 import type { RunState, ShipResult } from '../run/types';
 import type { VerifyResult } from '../agent/orchestrator';
@@ -47,7 +50,29 @@ export class ProjectSession {
   private readonly config: SessionConfig;
   private readonly runId: string;
   private readonly pipeline: Pipeline;
+  /** Hooks available to this run, for the Settings screen. */
+  static hooks() {
+    return hookCatalogue();
+  }
+
+  /** Built-in ECC skills, for the Settings "Skills" manager. */
+  static builtInSkills() {
+    return BUILT_IN_SKILLS.map(({ name, summary, triggers, agents, licence }) => ({
+      name,
+      summary,
+      triggers,
+      agents,
+      licence,
+    }));
+  }
+
   private currentState: RunState | null = null;
+  /** Most recent skill selection, for the Build screen ("skills used"). */
+  lastSkillSelection: SkillSelection | null = null;
+  lastSkillAgent: string | null = null;
+  /** Hooks that fired in this run, newest last. */
+  readonly lastHooks: { id: string; exitCode: number; message?: string }[] = [];
+  readonly blockedHooks: { id: string; exitCode: number; message?: string }[] = [];
 
   constructor(config: SessionConfig, runId = `run-${Date.now().toString(36)}`) {
     this.config = config;
@@ -82,12 +107,17 @@ export class ProjectSession {
       events: this.events,
       workspaceRoot: config.workspaceRoot,
       maxRoundsPerAgent: config.maxRoundsPerAgent,
-      extraContext: async () => {
-        const [memory, skills] = await Promise.all([
-          this.memory.context(),
-          this.skills.contextFor('android gradle kotlin build'),
-        ]);
-        return [memory, skills].filter(Boolean).join('\n\n');
+      extraContext: async () => this.memory.context(),
+      // Per-task skill selection (ECC built-ins + the project's own skills) is
+      // handled inside the orchestrator, so it can pick by trigger and agent.
+      userSkills: () => this.skills.list(),
+      onSkillsSelected: (agent, selection) => {
+        this.lastSkillSelection = selection;
+        this.lastSkillAgent = agent;
+      },
+      onHook: (applied) => {
+        this.lastHooks.push(applied);
+        if (applied.exitCode === 2) this.blockedHooks.push(applied);
       },
     });
     this.pipeline = new Pipeline({
