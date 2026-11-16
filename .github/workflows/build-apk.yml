@@ -1,0 +1,226 @@
+name: Build ForgeX APK
+
+on:
+  push:
+    branches: [main, 'arena/**']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-core:
+    name: Core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npm --workspace core run typecheck
+      - name: Unit tests (includes the CLI harness)
+        run: npm --workspace core run test
+      - name: CLI smoke (usage, secret scan)
+        run: |
+          # GitHub runs `run:` with `bash -e`, and a failing command substitution
+          # (which is exactly what we assert on here) would abort the script
+          # before the assertions run. Turn that off explicitly.
+          set +e
+          set -uo pipefail
+          npm --workspace core run build
+          usage_out=$(core/scripts/run-cli.sh 2>&1 || true)
+          echo "$usage_out" | head -3
+          if ! echo "$usage_out" | grep -q "usage:"; then
+            echo "::error title=cli:: usage text missing"
+            exit 1
+          fi
+          mkdir -p /tmp/scanws/workspace
+          printf 'const k = "sk-proj-abcdefghijklmnopqrstuvwxyz123456";\n' > /tmp/scanws/workspace/leak.ts
+          scan_out=$(core/scripts/run-cli.sh scan check --out /tmp/scanws 2>&1)
+          scan_code=$?
+          echo "$scan_out" | head -5
+          if [ "$scan_code" -eq 0 ]; then
+            echo "::error title=cli:: secret scan did not fail on a planted key"
+            exit 1
+          fi
+          if ! echo "$scan_out" | grep -q "openai-key"; then
+            echo "::error title=cli:: scan output did not name the matched rule"
+            exit 1
+          fi
+          echo "CLI secret scan correctly failed on a planted key" 
+      - name: Build web bundle
+        run: npm --workspace core run build
+      - name: Verify the built bundle boots and renders
+        run: node scripts/verify-bundle.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-bundle
+          path: core/dist
+          if-no-files-found: error
+
+  test-android:
+    name: Android unit tests
+    needs: test-core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm --workspace core run build
+      - name: Gradle unit tests (path sandbox, keystore, kv)
+        working-directory: android
+        run: |
+          set +e
+          {
+            gradle wrapper --gradle-version 8.7 --no-daemon
+            ./gradlew testDebugUnitTest --no-daemon --stacktrace
+          } > /tmp/gradle.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            # Surface the failure as annotations: those are readable through the
+            # Checks API even when the raw log blob is not reachable.
+            grep -E "^e: |error:|FAILED|Caused by:|What went wrong|Execution failed|> Task.*FAILED|Tests? .*failed" /tmp/gradle.log | head -40 | while IFS= read -r line; do
+              echo "::error title=gradle::${line:0:900}"
+            done
+            # Assertion messages live in the JUnit XML, not the console output.
+            python3 ../../scripts/ci-junit-annotations.py 'app/build/test-results/testDebugUnitTest/*.xml'
+          fi
+          exit $code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-test-reports
+          path: android/app/build/reports
+          if-no-files-found: ignore
+
+  build-apk:
+    name: Build debug APK
+    needs: [test-core, test-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Build agent core + UI bundle
+        run: npm --workspace core run build
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          set +e
+          {
+            gradle wrapper --gradle-version 8.7 --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          } > /tmp/gradle-build.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            grep -E "^e: |error:|FAILED|Caused by:|What went wrong|Execution failed" /tmp/gradle-build.log | head -40 | while IFS= read -r line; do
+              echo "::error title=gradle-build::${line:0:900}"
+            done
+            tail -80 /tmp/gradle-build.log | while IFS= read -r line; do
+              echo "::error title=gradle-build-tail::${line:0:900}"
+            done
+          fi
+          exit $code
+      - name: Verify the APK exists and has the web assets inside
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          test -n "$APK" || { echo "no APK produced"; exit 1; }
+          ls -la "$APK"
+          unzip -l "$APK" | grep -q 'assets/app/index.html' || { echo "web bundle missing from APK"; exit 1; }
+          unzip -l "$APK" | grep -q 'assets/app/ui.js' || { echo "ui.js missing from APK"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forgex-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # --- APK distribution ---------------------------------------------------
+      # Actions artifacts live on a blob host that not every client can reach
+      # (and they need a login), so the same APK is published two more ways:
+      #   1. as a release asset, so there is a stable public download URL;
+      #   2. committed to the `forgex-apk` branch, so a tool that can only read
+      #      api.github.com can still fetch the exact bytes by commit SHA.
+      - name: Prepare release metadata
+        id: apkmeta
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          BYTES=$(stat -c %s "$APK")
+          SHORT=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "bytes=$BYTES" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHORT" >> "$GITHUB_OUTPUT"
+          echo "APK $APK ($BYTES bytes, sha256 $SHA)"
+
+      - name: Publish APK to a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: forgex-apk-latest
+          name: ForgeX debug APK (latest)
+          body: |
+            Debug APK built from commit ${{ github.sha }} by run ${{ github.run_id }}.
+
+            - size: ${{ steps.apkmeta.outputs.bytes }} bytes
+            - sha256: `${{ steps.apkmeta.outputs.sha256 }}`
+            - install: allow "install unknown apps" for your browser/file manager, then open the APK
+
+            This is a debug build signed with CI's ephemeral key. It is not a Play Store build.
+          files: android/app/build/outputs/apk/debug/*.apk
+          fail_on_unmatched_files: true
+          overwrite_files: true
+
+      - name: Commit the APK to the forgex-apk branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          cp "$APK" /tmp/forgex-debug.apk
+          cat > /tmp/apk-note.md <<NOTE
+          # ForgeX APK
+
+          \`forgex-debug.apk\` is the debug APK built from commit
+          [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          by [run ${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+          | | |
+          | --- | --- |
+          | size | ${{ steps.apkmeta.outputs.bytes }} bytes |
+          | sha256 | \`${{ steps.apkmeta.outputs.sha256 }}\` |
+
+          This branch is machine-written on every successful build. It exists so the
+          binary can be fetched without the Actions artifact API.
+          NOTE
+          cd /tmp
+          rm -rf apk-branch && mkdir apk-branch && cd apk-branch
+          git init -q -b forgex-apk
+          git config user.name "forgex-ci"
+          git config user.email "forgex-ci@users.noreply.github.com"
+          cp /tmp/forgex-debug.apk forgex-debug.apk
+          cp /tmp/apk-note.md README.md
+          git add forgex-debug.apk README.md
+          git commit -q -m "apk: build from ${{ github.sha }} (run ${{ github.run_id }})"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" forgex-apk
+          echo "pushed forgex-apk branch"

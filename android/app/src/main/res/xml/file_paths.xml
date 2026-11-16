@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Only app-private storage is exposed, and only for .apk files we wrote. -->
+    <files-path name="workspace" path="workspace/" />
+    <cache-path name="cache" path="." />
+</paths>
