@@ -30,6 +30,7 @@ interface Settings {
   approvalMode: ApprovalMode;
   githubOwner: string;
   githubRepo: string;
+  seedScaffold: boolean;
 }
 
 interface ProjectRecord {
@@ -84,6 +85,7 @@ const state: AppState = {
     approvalMode: 'ASK',
     githubOwner: '',
     githubRepo: '',
+    seedScaffold: true,
   },
   projects: [],
   activeProjectId: null,
@@ -312,6 +314,12 @@ function renderHome(): string {
       <div style="height:10px"></div>
       <button class="primary" id="start">New build</button>
       <p class="muted small" style="margin-bottom:0">${esc(state.note)}</p>
+      ${state.settings.apiKey
+        ? ''
+        : `<div class="small" style="color:var(--warn);margin-top:8px">
+             No provider key yet. You can still edit the plan and browse the workspace offline;
+             add a key in Settings to run the agents.
+           </div>`}
     </div>
     <div class="section-title">Projects</div>
     ${state.projects.length === 0
@@ -670,6 +678,11 @@ function bind(): void {
     state.settings.baseUrl = preset.baseUrl;
     state.settings.model = preset.defaultModel;
     render();
+  });
+  (el('seed-toggle') as HTMLInputElement | null)?.addEventListener('change', (event) => {
+    state.settings.seedScaffold = (event.target as HTMLInputElement).checked;
+    void saveSettings();
+    toast(`Project seed ${state.settings.seedScaffold ? 'on' : 'off'}`);
   });
   el('new-skill')?.addEventListener('click', () => void createSkill());
   el('scan-now')?.addEventListener('click', () => void scanWorkspace());

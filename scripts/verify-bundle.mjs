@@ -7,8 +7,18 @@
  * assembled.
  */
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
-const code = fs.readFileSync('core/dist/ui.js', 'utf8');
+
+// Resolve relative to this script so CI and a local run agree.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const bundlePath = path.join(repoRoot, 'core/dist/ui.js');
+if (!fs.existsSync(bundlePath)) {
+  console.error(`::error title=bundle:: ${bundlePath} is missing; run "npm --workspace core run build" first`);
+  process.exit(1);
+}
+const code = fs.readFileSync(bundlePath, 'utf8');
 const container = { innerHTML: '', dataset: {}, addEventListener() {} };
 const sandbox = {
   console,

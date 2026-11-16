@@ -32,6 +32,8 @@ export interface SessionConfig {
   maxRoundsPerAgent?: number;
   github?: { token: string; owner: string; repo: string; branch?: string };
   pollIntervalMs?: number;
+  /** Seed an empty workspace with the known-good Android skeleton. Default true. */
+  seedScaffold?: boolean;
 }
 
 export class ProjectSession {
@@ -105,6 +107,7 @@ export class ProjectSession {
         );
       },
       saveState: (state) => this.saveState(state),
+      seedScaffold: config.seedScaffold ?? true,
     });
   }
 
