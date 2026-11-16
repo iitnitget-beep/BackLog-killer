@@ -154,9 +154,72 @@ jobs:
           name: forgex-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-      - name: Attach APK to a GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+
+      # --- APK distribution ---------------------------------------------------
+      # Actions artifacts live on a blob host that not every client can reach
+      # (and they need a login), so the same APK is published two more ways:
+      #   1. as a release asset, so there is a stable public download URL;
+      #   2. committed to the `forgex-apk` branch, so a tool that can only read
+      #      api.github.com can still fetch the exact bytes by commit SHA.
+      - name: Prepare release metadata
+        id: apkmeta
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          BYTES=$(stat -c %s "$APK")
+          SHORT=$(echo "$GITHUB_SHA" | cut -c1-7)
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "bytes=$BYTES" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHORT" >> "$GITHUB_OUTPUT"
+          echo "APK $APK ($BYTES bytes, sha256 $SHA)"
+
+      - name: Publish APK to a GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: forgex-apk-latest
+          name: ForgeX debug APK (latest)
+          body: |
+            Debug APK built from commit ${{ github.sha }} by run ${{ github.run_id }}.
+
+            - size: ${{ steps.apkmeta.outputs.bytes }} bytes
+            - sha256: `${{ steps.apkmeta.outputs.sha256 }}`
+            - install: allow "install unknown apps" for your browser/file manager, then open the APK
+
+            This is a debug build signed with CI's ephemeral key. It is not a Play Store build.
           files: android/app/build/outputs/apk/debug/*.apk
-          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+      - name: Commit the APK to the forgex-apk branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          APK=$(find android/app/build/outputs/apk/debug -name '*.apk' | head -1)
+          cp "$APK" /tmp/forgex-debug.apk
+          cat > /tmp/apk-note.md <<NOTE
+          # ForgeX APK
+
+          \`forgex-debug.apk\` is the debug APK built from commit
+          [${{ github.sha }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          by [run ${{ github.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+          | | |
+          | --- | --- |
+          | size | ${{ steps.apkmeta.outputs.bytes }} bytes |
+          | sha256 | \`${{ steps.apkmeta.outputs.sha256 }}\` |
+
+          This branch is machine-written on every successful build. It exists so the
+          binary can be fetched without the Actions artifact API.
+          NOTE
+          cd /tmp
+          rm -rf apk-branch && mkdir apk-branch && cd apk-branch
+          git init -q -b forgex-apk
+          git config user.name "forgex-ci"
+          git config user.email "forgex-ci@users.noreply.github.com"
+          cp /tmp/forgex-debug.apk forgex-debug.apk
+          cp /tmp/apk-note.md README.md
+          git add forgex-debug.apk README.md
+          git commit -q -m "apk: build from ${{ github.sha }} (run ${{ github.run_id }})"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" forgex-apk
+          echo "pushed forgex-apk branch
