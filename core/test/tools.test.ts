@@ -125,3 +125,14 @@ describe('approval modes', () => {
     expect((await approvalFor('FULL_AUTO', undefined, { toolName: 'run_command', args: {}, permission: 'deny' })).approved).toBe(false);
   });
 });
+
+describe('workspace semantics (mirrors the native bridge)', () => {
+  it('resolves relative tool paths inside the project root', async () => {
+    const { registry, platform, root } = makeRegistry();
+    await registry.execute('write_file', { path: 'app/src/Main.kt', content: 'x' }, { workspaceRoot: root });
+    // The file must exist under the project root, not somewhere adjacent.
+    expect(await platform.fs.exists(`${root}/app/src/Main.kt`)).toBe(true);
+    const entries = await platform.fs.list(root, { recursive: true, includeDirs: false });
+    expect(entries.map((entry) => entry.name)).toContain('app/src/Main.kt');
+  });
+});

@@ -282,13 +282,16 @@ class ForgeXBridge(
      * `..` segments cannot escape.
      */
     internal fun resolvePath(path: String, mustExist: Boolean): File {
-        val root = if (path.startsWith("/workspace")) workspaceRoot else appDataRoot
-        val relative = when {
-            path.startsWith("/workspace/") -> path.removePrefix("/workspace/")
-            path == "/workspace" -> ""
-            path.startsWith("/data/") -> path.removePrefix("/data/")
+        // Relative paths are relative to the project workspace, because that is
+        // what the agent means by "app/src/Main.kt". Only the explicit /data/
+        // prefix reaches the wider app-private directory (KV, artifacts).
+        val (root, relative) = when {
+            path.startsWith("/workspace/") -> workspaceRoot to path.removePrefix("/workspace/")
+            path == "/workspace" -> workspaceRoot to ""
+            path == "/data" -> appDataRoot to ""
+            path.startsWith("/data/") -> appDataRoot to path.removePrefix("/data/")
             path.startsWith("/") -> throw SecurityException("absolute path outside the sandbox: $path")
-            else -> path
+            else -> workspaceRoot to path
         }
         if (relative.split('/').any { it == ".." }) {
             throw SecurityException("path traversal rejected: $path")

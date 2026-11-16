@@ -55,6 +55,15 @@ class PathSandboxTest {
     }
 
     @Test
+    fun `relative paths land inside the project workspace not the data dir`() {
+        val bridge = bridge()
+        val file = bridge.resolvePath("app/src/Main.kt", mustExist = false)
+        assertTrue("expected a workspace path, got ${file.path}", file.path.contains("/workspace/"))
+        val dataFile = bridge.resolvePath("/data/artifact.zip", mustExist = false)
+        assertFalse("the data dir must not be the workspace", dataFile.path.contains("/workspace/"))
+    }
+
+    @Test
     fun `maps the virtual workspace prefix into app storage`() {
         val bridge = bridge()
         val file = bridge.resolvePath("/workspace/proj/app/build.gradle.kts", mustExist = false)
