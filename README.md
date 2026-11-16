@@ -127,6 +127,20 @@ with instructions rather than shipping a blank app.
 4. Watch the timeline, edit the plan, approve or deny writes, then take the APK
    from **Ship**.
 
+### Getting the APK without GitHub Actions
+
+CI publishes every build three ways (see DECISIONS D22). The one to hand to a
+person is the rolling release:
+
+```text
+https://github.com/iitnitget-beep/BackLog-killer/releases/tag/forgex-apk-latest
+```
+
+The release body carries the commit SHA, byte size and `sha256` of the asset.
+The same file is also force-pushed to the `forgex-apk` branch, and uploaded as
+the `forgex-debug-apk` Actions artifact. It is a debug build signed with CI's
+ephemeral key: allow "install unknown apps" for your file manager, then open it.
+
 ---
 
 ## How each reference repository was used

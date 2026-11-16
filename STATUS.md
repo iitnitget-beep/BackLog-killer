@@ -2,14 +2,14 @@
 
 Last verified: 2026-11-16, against the head of
 `arena/48cf1f1b-backlog-killer` / CI run
-[43893659614](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43893659614) (commit
-`1b4b26b`, the ECC port `a0e6f7d`) — **all jobs green**.
+[43901293530](https://github.com/iitnitget-beep/BackLog-killer/actions/runs/43901293530) (commit
+`5849b69`, the ECC port `a0e6f7d`) — **all jobs green**.
 
 | Job | Result |
 | --- | --- |
 | Core tests (typecheck, 196 tests, CLI smoke, bundle boot check) | success |
 | Android unit tests (Robolectric sandbox/keystore/kv) | success |
-| Build debug APK | success — `forgex-debug-apk`, 4,406,229 bytes |
+| Build debug APK | success — `forgex-debug-apk`, 4,721,576 bytes |
 
 Legend: **WORKING** = implemented and verified by an automated test or a real CI
 run. **PARTIAL** = implemented but not verified end-to-end, or limited for a
@@ -24,10 +24,12 @@ stated reason. **NOT DONE** = not implemented.
 | TypeScript typecheck (`tsc --noEmit`, strict) | **pass** |
 | Core unit/integration tests | **196 pass**, 17 files |
 | Kotlin unit tests (Robolectric) | **pass** in CI |
-| Debug APK built in CI | **pass** — 4.41 MB artifact `forgex-debug-apk` (+232 KB for the vendored skills) |
+| Debug APK built in CI | **pass** — 4.72 MB artifact `forgex-debug-apk` (+547 KB over the 4.17 MB pre-ECC build: 7 vendored skills and the hook/skill UI) |
 | APK contains the web bundle | **pass** — CI asserts `assets/app/index.html` and `assets/app/ui.js` |
 | Built UI bundle boots and renders | **pass** — `scripts/verify-bundle.mjs` runs the real esbuild output in a DOM sandbox and checks the home screen, tab bar and preview badge |
 | UI bundle size (7 vendored skills included) | 297,018 B → 83,807 B gzipped |
+| APK distribution channels | **pass** — every successful build publishes the APK to the rolling release [`forgex-apk-latest`](https://github.com/iitnitget-beep/BackLog-killer/releases/tag/forgex-apk-latest) and to the `forgex-apk` branch (commit `c807182`), same bytes, `sha256 00f34fb1…f58774`, 4,721,576 B; verified by unzipping the published file (437 entries, `assets/app/ui.js` present, ECC hook strings inside) |
+| APK uploads to Google Drive for the user | **WORKING** — `ForgeX-debug-5849b69.apk` in Drive, 4,721,576 B, same sha256 as the CI artifact (the APK bytes were fetched through the Git blob API because the Actions artifact blob host is unreachable from this sandbox) |
 | APK installs and launches on a physical device | **NOT DONE** — no device or emulator in this environment; the launch test (`AppLaunchTest`) is an instrumented test that has not been executed, and CI cannot run it. This is the one acceptance criterion from M1/M6 that remains unverified. |
 
 Honest note on that gap: `assembleDebug` succeeding proves the app compiles, the

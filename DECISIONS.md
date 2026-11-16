@@ -210,3 +210,29 @@ matter (name, description, triggers, enabled, origin). That file is visible in
 the Workspace screen, editable, and wins over the built-in — the user can read
 and change the exact text that steers their agents, which a hidden prompt could
 not offer.
+
+### D22. Three distribution paths for the APK, because artifacts are not portable
+
+GitHub Actions artifacts are the obvious channel and the worst one to depend on:
+they expire, they require a login, and they are served from an Azure blob host
+that some clients cannot reach at all (this development sandbox cannot). A user
+asking "give me the APK link" cannot use an artifact URL.
+
+Every successful `build-apk` job now publishes the same bytes three ways:
+
+1. `actions/upload-artifact@v4` — unchanged, for CI debugging and the
+   `web-bundle`/`android-test-reports` companions.
+2. A rolling release, tag `forgex-apk-latest`, asset `app-debug.apk`, with the
+   commit SHA, byte size and `sha256` in the release body. This is the link a
+   human should be given.
+3. A force-pushed `forgex-apk` branch containing `forgex-debug.apk` and a
+   README. This exists specifically so an automation that can only reach
+   `api.github.com` can still read the exact bytes through the Git blob API.
+
+The two copies are the same file (verified by matching size + `sha256`), and the
+tag-based release path is skipped for forks that cannot write releases.
+
+Note on the drive step: with no real device here, "install and launch" is still
+unverified (see STATUS). Uploading the file proves the artifact is intact and
+transferable, not that it runs. The debug key is CI's ephemeral one, so the
+release notes say side-load only.
