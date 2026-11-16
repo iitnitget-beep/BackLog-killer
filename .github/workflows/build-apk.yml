@@ -53,8 +53,23 @@ jobs:
       - name: Gradle unit tests (path sandbox, keystore, kv)
         working-directory: android
         run: |
-          gradle wrapper --gradle-version 8.7 --no-daemon
-          ./gradlew testDebugUnitTest --no-daemon --stacktrace
+          set +e
+          {
+            gradle wrapper --gradle-version 8.7 --no-daemon
+            ./gradlew testDebugUnitTest --no-daemon --stacktrace
+          } > /tmp/gradle.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            # Surface the failure as annotations: those are readable through the
+            # Checks API even when the raw log blob is not reachable.
+            grep -E "^e: |error:|FAILED|Caused by:|What went wrong|Execution failed|> Task.*FAILED|Tests? .*failed" /tmp/gradle.log | head -40 | while IFS= read -r line; do
+              echo "::error title=gradle::${line:0:900}"
+            done
+            tail -80 /tmp/gradle.log | while IFS= read -r line; do
+              echo "::error title=gradle-tail::${line:0:900}"
+            done
+          fi
+          exit $code
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -82,8 +97,21 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: |
-          gradle wrapper --gradle-version 8.7 --no-daemon
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          set +e
+          {
+            gradle wrapper --gradle-version 8.7 --no-daemon
+            ./gradlew assembleDebug --no-daemon --stacktrace
+          } > /tmp/gradle-build.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            grep -E "^e: |error:|FAILED|Caused by:|What went wrong|Execution failed" /tmp/gradle-build.log | head -40 | while IFS= read -r line; do
+              echo "::error title=gradle-build::${line:0:900}"
+            done
+            tail -80 /tmp/gradle-build.log | while IFS= read -r line; do
+              echo "::error title=gradle-build-tail::${line:0:900}"
+            done
+          fi
+          exit $code
       - name: Verify the APK exists and has the web assets inside
         run: |
           set -euo pipefail

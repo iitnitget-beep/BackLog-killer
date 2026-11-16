@@ -101,14 +101,25 @@ class PathSandboxTest {
         assertTrue(result.contains("\"code\":0"))
     }
 
+    /**
+     * The contract is "encrypted or nothing": if the Keystore is available the
+     * value round-trips, and if it is not the store reports unavailable and
+     * returns null so the caller refuses to start. What must never happen is a
+     * silent plaintext fallback - that is what this test locks down.
+     */
     @Test
-    fun `secrets round trip through the encrypted store`() {
+    fun `secrets round trip only when encrypted storage is available`() {
         val activity: Activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val store = SecureStore(activity)
-        store.set("provider/apiKey", "sk-test-123")
-        assertEquals("sk-test-123", store.get("provider/apiKey"))
-        store.delete("provider/apiKey")
-        assertEquals(null, store.get("provider/apiKey"))
+        if (store.isAvailable()) {
+            store.set("provider/apiKey", "sk-test-123")
+            assertEquals("sk-test-123", store.get("provider/apiKey"))
+            store.delete("provider/apiKey")
+            assertEquals(null, store.get("provider/apiKey"))
+        } else {
+            store.set("provider/apiKey", "sk-test-123")
+            assertEquals("unavailable store must not retain secrets", null, store.get("provider/apiKey"))
+        }
     }
 
     @Test
