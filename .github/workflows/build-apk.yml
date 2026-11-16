@@ -189,6 +189,7 @@ jobs:
             This is a debug build signed with CI's ephemeral key. It is not a Play Store build.
           files: android/app/build/outputs/apk/debug/*.apk
           fail_on_unmatched_files: true
+          overwrite_files: true
 
       - name: Commit the APK to the forgex-apk branch
         env:
@@ -222,4 +223,4 @@ jobs:
           git add forgex-debug.apk README.md
           git commit -q -m "apk: build from ${{ github.sha }} (run ${{ github.run_id }})"
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" forgex-apk
-          echo "pushed forgex-apk branch
+          echo "pushed forgex-apk branch"
